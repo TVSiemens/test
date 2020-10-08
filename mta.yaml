@@ -1,0 +1,143 @@
+## Generated mta.yaml based on template version 0.4.0
+## appName = jenkinstest
+## language=java; multiTenant=false
+## approuter=
+_schema-version: '3.1'
+ID: jenkinstest
+version: 0.0.13
+description: "jenkinstest application"
+parameters:
+  enable-parallel-deployments: true
+   
+build-parameters:
+  before-all:
+   - builder: custom
+     commands:
+      - npm install --production
+      - npx -p @sap/cds-dk cds build --production
+ 
+ # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+modules:
+ # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ # --------------------- SERVER MODULE ------------------------
+ - name: jenkinstest-srv
+ # ------------------------------------------------------------
+   type: java
+   path: srv
+   build-parameters:
+     builder: custom
+     commands: [ mvn clean package ]
+     build-result: "target/*.[wj]ar"
+   requires:
+    # Resources extracted from CAP configuration
+    - name: jenkinstest-uaa
+    - name: jenkinstest-db
+      properties:
+        SPRING_PROFILES_ACTIVE: cloud
+   provides:
+    - name: srv-url      # required by consumers of CAP services (e.g. approuter)
+      properties:
+        url: ${default-url}
+
+ # -------------------- SIDECAR MODULE ------------------------
+ - name: jenkinstest-db-deployer
+ # ------------------------------------------------------------
+   type: hdb
+   path: db  
+   parameters:
+     buildpack: nodejs_buildpack
+   requires:
+    # 'hana' and 'xsuaa' resources extracted from CAP configuration
+    - name: jenkinstest-db
+
+ # -------------------- APPROUTER MODULE ----------------------
+ - name: jenkinstest-approuter
+ # ------------------------------------------------------------
+   type: nodejs
+   path: approuter
+   parameters: 
+     memory: 256M
+     disk-quota: 512M
+   requires:
+   - name: jenkinstest-html5-repo-runtime
+   - name: jenkinstest-uaa
+   - name: srv-url
+     group: destinations
+     properties:
+       name: backend
+       url: ~{url}
+       forwardAuthToken: true
+       strictSSL: true
+   provides:
+     - name: app-url
+       properties:
+         url: '${default-url}'
+
+ # ------------------ html5 Deployer Module -------------------
+ - name: jenkinstest-html5-deployer
+ # ------------------------------------------------------------
+   type: com.sap.application.content
+   path: .
+   requires:
+     - name: html5_repo_host
+       parameters:
+         content-target: true
+   build-parameters:
+     build-result: resources
+     requires:
+       - artifacts:
+           - bookshop-content.zip
+         name: bookshop-HTML5Module
+         target-path: resources/
+
+ # --------------- bookshop HTML5 Module ----------------------
+ - name: bookshop-HTML5Module
+ # ------------------------------------------------------------
+   type: html5
+   path: app/bookshop/webapp
+   build-parameters:
+     builder: custom
+     commands:
+       - npm run build
+     supported-platforms: []
+
+ # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+resources:
+ # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ # services extracted from CAP configuration
+ # 'service-plan' can be configured via 'cds.requires.<name>.vcap.plan'
+
+ # ---------------------- DB RESOURCE -------------------------
+ - name: jenkinstest-db
+ # ------------------------------------------------------------
+   type: com.sap.xs.hdi-container
+   parameters:
+     service: hanatrial  # or 'hanatrial' on trial landscapes
+     service-plan: hdi-shared
+   properties:
+     hdi-service-name: ${service-name}
+
+ # ---------------- HTML5 Repo Host RESOURCE ------------------
+ - name: html5_repo_host
+ # ------------------------------------------------------------
+   type: org.cloudfoundry.managed-service
+   parameters:
+     service-plan: app-host
+     service: html5-apps-repo
+
+ # ----------- HTML5 Repo Host Runtime RESOURCE ---------------
+ - name: jenkinstest-html5-repo-runtime
+ # ------------------------------------------------------------
+   parameters:
+     service: html5-apps-repo
+     service-plan: app-runtime  
+   type: org.cloudfoundry.managed-service
+
+ # ----------- UAA RESOURCE ---------------
+ - name: jenkinstest-uaa
+ # ------------------------------------------------------------
+   type: org.cloudfoundry.managed-service
+   parameters:
+     path: ./xs-security.json
+     service: xsuaa
+     service-plan: application
